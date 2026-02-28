@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "etl-data-testing"
+version = "0.1.0"
+description = "Automation framework for testing ETL pipelines (Fivetran → Coalesce → Snowflake → Power BI)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+    "snowflake-connector-python>=3.6",
+    "requests>=2.31",
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+    "pyyaml>=6.0",
+    "rich>=13.7",
+    "click>=8.1",
+    "jinja2>=3.1",
+    "pandas>=2.1",
+    "pytest>=8.0",
+    "pytest-html>=4.1",
+    "python-dotenv>=1.0",
+    "croniter>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest-cov>=4.1",
+    "pytest-mock>=3.12",
+    "ruff>=0.2",
+    "mypy>=1.8",
+    "pre-commit>=3.6",
+]
+powerbi = [
+    "msal>=1.26",
+]
+
+[project.scripts]
+etl-test = "etl_testing.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "snowflake: tests requiring Snowflake connection",
+    "fivetran: tests requiring Fivetran API",
+    "coalesce: tests requiring Coalesce API",
+    "powerbi: tests requiring Power BI API",
+    "data_quality: data quality validation tests",
+    "schema: schema validation tests",
+    "freshness: data freshness tests",
+    "row_count: row count validation tests",
+    "e2e: end-to-end pipeline tests",
+]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true

@@ -1,0 +1,178 @@
+# ─────────────────────────────────────────────────────────────
+# Sample ETL Data Quality Test Configuration
+# ─────────────────────────────────────────────────────────────
+# Customise the database/schema/table names to match your
+# Snowflake environment.  Run with:
+#   etl-test check tests/configs/sample_tests.yaml
+# ─────────────────────────────────────────────────────────────
+
+version: "1"
+
+suites:
+  # ═══════════════════════════════════════════════════════════
+  # Suite 1 – Raw / staging layer (Fivetran landing zone)
+  # ═══════════════════════════════════════════════════════════
+  - name: "Fivetran Raw Layer Validation"
+    description: "Checks on data as it lands in Snowflake from Fivetran"
+    tags: [raw, fivetran]
+    checks:
+      - name: "raw_customers_not_empty"
+        type: row_count
+        severity: error
+        tags: [row_count, critical]
+        target:
+          database: ANALYTICS
+          schema: RAW_SALESFORCE
+          table: CUSTOMERS
+        min_rows: 1
+
+      - name: "raw_orders_freshness"
+        type: freshness
+        severity: error
+        tags: [freshness]
+        target:
+          database: ANALYTICS
+          schema: RAW_SALESFORCE
+          table: ORDERS
+        timestamp_column: "_FIVETRAN_SYNCED"
+        max_age_hours: 24
+
+      - name: "raw_customers_schema"
+        type: schema
+        severity: error
+        tags: [schema]
+        target:
+          database: ANALYTICS
+          schema: RAW_SALESFORCE
+          table: CUSTOMERS
+        expected_columns:
+          - name: ID
+            data_type: NUMBER
+            is_nullable: false
+          - name: EMAIL
+            data_type: VARCHAR
+          - name: CREATED_AT
+            data_type: TIMESTAMP_NTZ
+
+      - name: "raw_customers_no_null_ids"
+        type: null_check
+        severity: error
+        tags: [null_check]
+        target:
+          database: ANALYTICS
+          schema: RAW_SALESFORCE
+          table: CUSTOMERS
+        columns: [ID, EMAIL]
+
+  # ═══════════════════════════════════════════════════════════
+  # Suite 2 – Transformed layer (Coalesce output)
+  # ═══════════════════════════════════════════════════════════
+  - name: "Coalesce Transformation Validation"
+    description: "Checks on transformed/modelled data produced by Coalesce"
+    tags: [transform, coalesce]
+    checks:
+      - name: "dim_customer_row_count_match"
+        type: row_count_compare
+        severity: error
+        tags: [row_count]
+        source:
+          database: ANALYTICS
+          schema: RAW_SALESFORCE
+          table: CUSTOMERS
+        target:
+          database: ANALYTICS
+          schema: DWH
+          table: DIM_CUSTOMER
+        tolerance_pct: 5.0
+
+      - name: "dim_customer_unique_id"
+        type: unique_check
+        severity: error
+        tags: [uniqueness]
+        target:
+          database: ANALYTICS
+          schema: DWH
+          table: DIM_CUSTOMER
+        columns: [CUSTOMER_KEY]
+
+      - name: "fact_orders_no_duplicates"
+        type: duplicate_check
+        severity: error
+        tags: [duplicates]
+        target:
+          database: ANALYTICS
+          schema: DWH
+          table: FACT_ORDERS
+        columns: [ORDER_ID]
+
+      - name: "fact_orders_referential_integrity"
+        type: referential_integrity
+        severity: error
+        tags: [referential_integrity]
+        target:
+          database: ANALYTICS
+          schema: DWH
+          table: FACT_ORDERS
+        child_key: CUSTOMER_KEY
+        parent:
+          database: ANALYTICS
+          schema: DWH
+          table: DIM_CUSTOMER
+        parent_key: CUSTOMER_KEY
+
+      - name: "fact_orders_valid_amounts"
+        type: value_range
+        severity: warning
+        tags: [value_range]
+        target:
+          database: ANALYTICS
+          schema: DWH
+          table: FACT_ORDERS
+        column: ORDER_AMOUNT
+        min_value: 0
+        max_value: 1000000
+
+      - name: "fact_orders_valid_status"
+        type: accepted_values
+        severity: error
+        tags: [accepted_values]
+        target:
+          database: ANALYTICS
+          schema: DWH
+          table: FACT_ORDERS
+        column: ORDER_STATUS
+        accepted_values: ["pending", "processing", "shipped", "delivered", "cancelled"]
+
+  # ═══════════════════════════════════════════════════════════
+  # Suite 3 – Custom SQL checks
+  # ═══════════════════════════════════════════════════════════
+  - name: "Custom Business Rule Checks"
+    description: "Ad-hoc SQL checks for business-specific rules"
+    tags: [custom, business]
+    checks:
+      - name: "no_future_order_dates"
+        type: custom_sql
+        severity: error
+        tags: [custom_sql]
+        description: "Orders should not have dates in the future"
+        sql: |
+          SELECT ORDER_ID, ORDER_DATE
+          FROM "ANALYTICS"."DWH"."FACT_ORDERS"
+          WHERE ORDER_DATE > CURRENT_DATE()
+
+      - name: "revenue_reconciliation"
+        type: custom_sql
+        severity: warning
+        tags: [custom_sql, reconciliation]
+        description: "Total revenue in fact table should match staging"
+        sql: |
+          SELECT 'mismatch' AS issue
+          FROM (
+            SELECT ROUND(SUM(ORDER_AMOUNT), 2) AS fact_total
+            FROM "ANALYTICS"."DWH"."FACT_ORDERS"
+          ) f
+          CROSS JOIN (
+            SELECT ROUND(SUM(AMOUNT), 2) AS raw_total
+            FROM "ANALYTICS"."RAW_SALESFORCE"."ORDERS"
+          ) r
+          WHERE f.fact_total != r.raw_total
